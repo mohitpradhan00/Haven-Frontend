@@ -1,0 +1,283 @@
+import { useEffect, useRef, useState } from "react";
+import { GrAttachment } from "react-icons/gr";
+import { RiEmojiStickerLine } from "react-icons/ri";
+import { IoSend } from "react-icons/io5";
+import { BsMicFill, BsMicMuteFill } from "react-icons/bs";
+import EmojiPicker from "emoji-picker-react";
+import { useAppStore } from "../../../../../../store";
+import { useSocket } from "../../../../../../context/SocketContext";
+import { MESSAGE_TYPES, UPLOAD_FILE } from "../../../../../../utils/constants";
+import { apiClient } from "../../../../../../lib/api-client";
+
+const MessageBar = () => {
+  const emojiRef = useRef();
+  const fileInputRef = useRef();
+  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
+  const {
+    selectedChatType,
+    selectedChatData,
+    userInfo,
+    setIsUploading,
+    setFileUploadProgress,
+  } = useAppStore();
+
+  const [message, setMessage] = useState("");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const socket = useSocket();
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (emojiRef.current && !emojiRef.current.contains(event.target)) {
+        setEmojiPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const handleAddEmoji = (emoji) => {
+    setMessage((msg) => msg + emoji.emoji);
+  };
+
+  const handleMessageChange = (event) => {
+    setMessage(event.target.value);
+  };
+
+  const handleSendMessage = async () => {
+    if (!message.trim()) return;
+
+    const payload = {
+      sender: userInfo.id,
+      content: message,
+      messageType: MESSAGE_TYPES.TEXT,
+    };
+
+    if (selectedChatType === "contact") {
+      socket.emit("sendMessage", {
+        ...payload,
+        recipient: selectedChatData._id,
+      });
+    } else if (selectedChatType === "channel") {
+      socket.emit("send-channel-message", {
+        ...payload,
+        channelId: selectedChatData._id,
+      });
+    }
+
+    setMessage("");
+  };
+
+  const handleAttachmentChange = async (event) => {
+    try {
+      const file = event.target.files[0];
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        setIsUploading(true);
+
+        const response = await apiClient.post(UPLOAD_FILE, formData, {
+          withCredentials: true,
+          onUploadProgress: (data) => {
+            setFileUploadProgress(Math.round((100 * data.loaded) / data.total));
+          },
+        });
+
+        if (response.status === 200 && response.data) {
+          setIsUploading(false);
+          const fileMessage = {
+            sender: userInfo.id,
+            messageType: MESSAGE_TYPES.FILE,
+            fileUrl: response.data.filePath,
+          };
+
+          if (selectedChatType === "contact") {
+            socket.emit("sendMessage", {
+              ...fileMessage,
+              recipient: selectedChatData._id,
+            });
+          } else if (selectedChatType === "channel") {
+            socket.emit("send-channel-message", {
+              ...fileMessage,
+              channelId: selectedChatData._id,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      setIsUploading(false);
+      console.log({ error });
+    }
+  };
+
+  const toggleVoiceInput = () => {
+    if (!("webkitSpeechRecognition" in window)) {
+      alert("Your browser does not support speech recognition.");
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.lang = "en-IN";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript;
+      setMessage((prevMessage) => prevMessage.trim() + " " + transcript.trim());
+    };
+
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: "audio/mp3",
+        });
+        const formData = new FormData();
+        formData.append("file", audioBlob, "audio-message.mp3");
+
+        setIsUploading(true);
+        try {
+          const response = await apiClient.post(UPLOAD_FILE, formData, {
+            withCredentials: true,
+            onUploadProgress: (data) => {
+              setFileUploadProgress(
+                Math.round((100 * data.loaded) / data.total)
+              );
+            },
+          });
+
+          if (response.status === 200 && response.data) {
+            setIsUploading(false);
+            const audioMessage = {
+              sender: userInfo.id,
+              messageType: MESSAGE_TYPES.FILE,
+              fileUrl: response.data.filePath,
+            };
+
+            if (selectedChatType === "contact") {
+              socket.emit("sendMessage", {
+                ...audioMessage,
+                recipient: selectedChatData._id,
+              });
+            } else if (selectedChatType === "channel") {
+              socket.emit("send-channel-message", {
+                ...audioMessage,
+                channelId: selectedChatData._id,
+              });
+            }
+          }
+        } catch (error) {
+          setIsUploading(false);
+          console.log({ error });
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (error) {
+      console.error("Error starting audio recording:", error);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  return (
+    <div className="h-[10vh] bg-[#1c1d25] flex items-center px-4 sm:px-8 mb-4 sm:mb-8 gap-3 sm:gap-6">
+      <div className="flex-1 flex bg-[#2a2b33] rounded-md items-center gap-3 sm:gap-5 px-3 sm:pr-5">
+        <input
+          type="text"
+          className="flex-1 p-3 sm:p-5 bg-transparent rounded-md focus:outline-none text-sm sm:text-base"
+          placeholder="Enter Message"
+          value={message}
+          onChange={handleMessageChange}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              handleSendMessage();
+            }
+          }}
+        />
+
+        <button onClick={() => fileInputRef.current.click()}>
+          <GrAttachment />
+        </button>
+
+        <input
+          type="file"
+          className="hidden"
+          ref={fileInputRef}
+          onChange={handleAttachmentChange}
+        />
+
+        {/* 😀 Emoji Picker */}
+        <div className="relative">
+          <button
+            className="text-neutral-500 focus:outline-none transition-all text-lg sm:text-xl"
+            onClick={() => setEmojiPickerOpen(true)}
+          >
+            <RiEmojiStickerLine />
+          </button>
+          {emojiPickerOpen && (
+            <div className="absolute bottom-16 right-0" ref={emojiRef}>
+              <EmojiPicker theme="dark" onEmojiClick={handleAddEmoji} />
+            </div>
+          )}
+        </div>
+
+        <button onClick={isRecording ? stopRecording : startRecording}>
+          {isRecording ? "🎤 Stop" : "🎤 Record"}
+        </button>
+      </div>
+      <button onClick={toggleVoiceInput}>
+        {isListening ? <BsMicMuteFill /> : <BsMicFill />}
+      </button>
+      <button onClick={handleSendMessage}>
+        <IoSend />
+      </button>
+    </div>
+  );
+};
+
+export default MessageBar;

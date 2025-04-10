@@ -1,0 +1,48 @@
+.emoji-picker-modal {
+    scrollbar-width: none;
+}
+.chatbox{
+    scrollbar-width: none;
+    
+}
+.sidebar{
+    scrollbar-width: none;
+}
+#navbar{
+ animation: rolldown 1s ease-out;
+}
+#sidebar{
+    animation: slideRightIn 0.8s ease-out; 
+    
+}
+.hidden_menu{
+    display: none;
+}
+
+  
+
+
+@keyframes slideRightIn {
+    from{
+        transform: translateX(-500px);
+    }
+    to{
+        transform: translateX(0px);
+    }
+}
+@keyframes rolldown {
+   from {
+    
+    transform: translateY(-100px)rotateX(200deg);
+}
+to {
+    transform: translateY(0px)rotateX(0deg);
+
+}
+}
+
+@media (max-width:750px) {
+    #sidebar{
+        width: 30%;
+    }
+}
