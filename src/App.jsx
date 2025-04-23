@@ -1,5 +1,4 @@
 import React, { Component, useEffect, useState } from "react";
-import { Button } from "@/components/ui/Button";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import Profile from "@/pages/Profile";
